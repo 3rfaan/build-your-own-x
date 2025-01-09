@@ -44,7 +44,6 @@ impl Shell {
     fn print_prompt(&mut self) -> io::Result<()> {
         write!(self.writer, "$ ")?;
         self.flush()?;
-
         Ok(())
     }
 
@@ -67,6 +66,7 @@ impl Shell {
         } else {
             process::exit(0);
         }
+        self.flush()?;
         Ok(())
     }
 
@@ -88,6 +88,7 @@ impl Shell {
                 writeln!(self.writer, "{}: not found", arg)?;
             }
         }
+        self.flush()?;
         Ok(())
     }
 
@@ -97,6 +98,7 @@ impl Shell {
         } else {
             writeln!(self.writer, "{}: command not found", self.cmd)?;
         }
+        self.flush()?;
         Ok(())
     }
 }
