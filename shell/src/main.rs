@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
 
-const BUILTINS: [&str; 3] = ["exit", "echo", "type"];
+const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
 
 struct Shell {
     cmd: String,
@@ -24,7 +24,7 @@ impl Default for Shell {
 impl Shell {
     fn parse(&mut self, input: &str) {
         let mut parts = input.trim().splitn(2, ' ');
-        let cmd = parts.next().unwrap_or(&input).to_string();
+        let cmd = parts.next().unwrap_or(input).to_string();
         let args = parts
             .next()
             .unwrap_or("")
@@ -93,12 +93,44 @@ impl Shell {
     }
 
     fn execute(&mut self) -> io::Result<()> {
-        if let Some(_) = self.find_exe(&self.cmd) {
+        if self.find_exe(&self.cmd).is_some() {
             Command::new(&self.cmd).args(&self.args).status()?;
         } else {
             writeln!(self.writer, "{}: command not found", self.cmd)?;
         }
         self.flush()?;
+        Ok(())
+    }
+
+    fn pwd(&mut self) -> io::Result<()> {
+        writeln!(self.writer, "{}", env::current_dir()?.display())?;
+        Ok(())
+    }
+
+    fn cd(&mut self) -> io::Result<()> {
+        let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        let path = self
+            .args
+            .first()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(&home));
+
+        let path = if path.starts_with("~") {
+            let home = PathBuf::from(home);
+            home.join(path.strip_prefix("~").unwrap_or(&path))
+        } else if path.is_absolute() {
+            path
+        } else {
+            env::current_dir()?.join(&path)
+        };
+
+        if env::set_current_dir(&path).is_err() {
+            writeln!(
+                self.writer,
+                "cd: {}: No such file or directory",
+                path.display()
+            )?;
+        }
         Ok(())
     }
 }
@@ -119,6 +151,8 @@ fn main() -> Result<(), io::Error> {
             "exit" => shell.exit()?,
             "echo" => shell.echo()?,
             "type" => shell.cmd_type()?,
+            "pwd" => shell.pwd()?,
+            "cd" => shell.cd()?,
             _ => shell.execute()?,
         }
         input.clear();
