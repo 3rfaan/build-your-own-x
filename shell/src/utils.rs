@@ -146,13 +146,14 @@ impl Shell {
 
     pub(super) fn print_prompt(&mut self) -> io::Result<()> {
         // Print prompt `$ ` and then flush to force direct output
-        write!(self.writer, "$ ")?;
+        write!(self.stdout, "$ ")?;
         self.flush()?;
         Ok(())
     }
 
     pub(super) fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()?;
+        self.stdout.flush()?;
+        self.stderr.flush()?;
         Ok(())
     }
 }

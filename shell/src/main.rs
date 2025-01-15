@@ -1,6 +1,6 @@
 mod utils;
 
-use std::io::{self, BufWriter, Stdout, Write};
+use std::io::{self, BufWriter, Stderr, Stdout, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
@@ -10,15 +10,17 @@ const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
 pub struct Shell {
     cmd: String,
     args: Vec<String>,
-    writer: BufWriter<Stdout>,
+    stdout: BufWriter<Stdout>,
+    stderr: BufWriter<Stderr>,
 }
 
 impl Shell {
-    fn new(stdout: Stdout) -> Self {
+    fn new(stdout: Stdout, stderr: Stderr) -> Self {
         Self {
             cmd: String::new(),
             args: Vec::new(),
-            writer: BufWriter::new(stdout),
+            stdout: BufWriter::new(stdout),
+            stderr: BufWriter::new(stderr),
         }
     }
 
@@ -42,7 +44,7 @@ impl Shell {
             // Parse exit code to i32
             match code.parse::<i32>() {
                 Ok(code) => process::exit(code),
-                Err(_) => writeln!(self.writer, "Invalid exit code: {}", code)?,
+                Err(_) => writeln!(self.stderr, "Invalid exit code: {}", code)?,
             }
         } else {
             // Exit with exit code 0 when user types `exit` in terminal without
@@ -59,7 +61,7 @@ impl Shell {
         if let Some(mut stdout) = stdout_file {
             writeln!(stdout, "{}", output)?;
         } else {
-            writeln!(self.writer, "{}", output)?;
+            writeln!(self.stdout, "{}", output)?;
         }
 
         Ok(())
@@ -70,13 +72,13 @@ impl Shell {
         if let Some(arg) = self.args.first() {
             // Check if command is shell builtin
             if BUILTINS.contains(&arg.as_str()) {
-                writeln!(self.writer, "{} is a shell builtin", arg)?;
+                writeln!(self.stdout, "{} is a shell builtin", arg)?;
             }
             // Check if command is in `$PATH`
             else if let Some(path) = Self::find_exe_in_path(arg) {
-                writeln!(self.writer, "{} is {}", arg, path.display())?;
+                writeln!(self.stdout, "{} is {}", arg, path.display())?;
             } else {
-                writeln!(self.writer, "{}: not found", arg)?;
+                writeln!(self.stderr, "{}: not found", arg)?;
             }
         }
         Ok(())
@@ -103,7 +105,7 @@ impl Shell {
 
         // Execute command with provided arguments, if error then command is invalid
         if cmd.status().is_err() {
-            writeln!(self.writer, "{}: command not found", self.cmd)?;
+            writeln!(self.stderr, "{}: command not found", self.cmd)?;
         }
 
         Ok(())
@@ -111,7 +113,7 @@ impl Shell {
 
     fn pwd(&mut self) -> io::Result<()> {
         // Print working directory
-        writeln!(self.writer, "{}", env::current_dir()?.display())?;
+        writeln!(self.stdout, "{}", env::current_dir()?.display())?;
         Ok(())
     }
 
@@ -144,7 +146,7 @@ impl Shell {
         // Set environment current working directory to `path`
         if env::set_current_dir(&path).is_err() {
             writeln!(
-                self.writer,
+                self.stderr,
                 "cd: {}: No such file or directory",
                 path.display()
             )?;
@@ -156,9 +158,10 @@ impl Shell {
 fn main() -> Result<(), io::Error> {
     let stdin = io::stdin();
     let stdout = io::stdout();
+    let stderr = io::stderr();
 
     let mut input = String::new();
-    let mut shell = Shell::new(stdout);
+    let mut shell = Shell::new(stdout, stderr);
 
     loop {
         shell.print_prompt()?;
