@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
 
-use utils::{sh_write, sh_writeln};
-
 const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
 
 pub struct Shell {
@@ -21,7 +19,7 @@ impl Shell {
             if let Ok(code) = code.parse::<i32>() {
                 process::exit(code)
             } else {
-                sh_writeln!(self, "Invalid exit code: {}", code)?;
+                writeln!(self.writer, "Invalid exit code: {}", code)?;
             }
         } else {
             process::exit(0);
@@ -30,13 +28,14 @@ impl Shell {
     }
 
     fn echo(&mut self) -> io::Result<()> {
-        for (i, arg) in self.args.iter().enumerate() {
-            if i > 0 {
-                sh_write!(self, " ")?;
-            }
-            sh_write!(self, "{}", arg)?;
+        let (cmd_args, stdout_file, _) = self.handle_redirect()?;
+
+        if let Some(mut stdout) = stdout_file {
+            writeln!(stdout, "{}", cmd_args.join(" "))?;
+        } else {
+            writeln!(self.writer, "{}", cmd_args.join(" "))?;
         }
-        sh_write!(self, "\n")?;
+
         Ok(())
     }
 
@@ -45,25 +44,39 @@ impl Shell {
             let path = Self::find_exe_in_path(arg);
 
             if BUILTINS.contains(&arg.as_str()) {
-                sh_writeln!(self, "{} is a shell builtin", arg)?;
+                writeln!(self.writer, "{} is a shell builtin", arg)?;
             } else if let Some(path) = path {
-                sh_writeln!(self, "{} is {}", arg, path.display())?;
+                writeln!(self.writer, "{} is {}", arg, path.display())?;
             } else {
-                sh_writeln!(self, "{}: not found", arg)?;
+                writeln!(self.writer, "{}: not found", arg)?;
             }
         }
         Ok(())
     }
 
     fn execute(&mut self) -> io::Result<()> {
-        if Command::new(&self.cmd).args(&self.args).status().is_err() {
-            sh_writeln!(self, "{}: command not found", self.cmd)?
+        let (cmd_args, stdout_file, stderr_file) = self.handle_redirect()?;
+
+        let mut cmd = Command::new(&self.cmd);
+        cmd.args(cmd_args);
+
+        if let Some(stdout) = stdout_file {
+            cmd.stdout(stdout);
         }
+
+        if let Some(stderr) = stderr_file {
+            cmd.stderr(stderr);
+        }
+
+        if cmd.status().is_err() {
+            writeln!(self.writer, "{}: command not found", self.cmd)?;
+        }
+
         Ok(())
     }
 
     fn pwd(&mut self) -> io::Result<()> {
-        sh_writeln!(self, "{}", env::current_dir()?.display())?;
+        writeln!(self.writer, "{}", env::current_dir()?.display())?;
         Ok(())
     }
 
@@ -85,7 +98,11 @@ impl Shell {
         };
 
         if env::set_current_dir(&path).is_err() {
-            sh_writeln!(self, "cd: {}: No such file or directory", path.display())?;
+            writeln!(
+                self.writer,
+                "cd: {}: No such file or directory",
+                path.display()
+            )?;
         }
         Ok(())
     }

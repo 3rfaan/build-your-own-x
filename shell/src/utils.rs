@@ -1,32 +1,12 @@
 use std::{
     env,
+    fs::{File, OpenOptions},
     io::{self, BufWriter, Write},
-    iter::Peekable,
     mem,
     path::PathBuf,
 };
 
 use super::Shell;
-
-macro_rules! sh_write {
-    ($self:ident,$fmt:expr) => {
-        write!($self.writer, $fmt)
-    };
-    ($self:ident,$fmt:expr,$($args:tt)*) => {
-        write!($self.writer, $fmt, $($args)*)
-    }
-}
-
-macro_rules! sh_writeln {
-    ($self:ident,$fmt:expr) => {
-        writeln!($self.writer, $fmt)
-    };
-    ($self:ident,$fmt:expr,$($args:tt)*) => {
-        writeln!($self.writer, $fmt, $($args)*)
-    }
-}
-
-pub(crate) use {sh_write, sh_writeln};
 
 const SINGLE_QUOTES: char = '\'';
 const DOUBLE_QUOTES: char = '"';
@@ -47,32 +27,31 @@ impl Default for Shell {
 
 impl Shell {
     pub(super) fn parse_input(&mut self, input: &str) {
-        let mut chars = input.trim().chars().peekable();
+        let mut chars = input.trim().chars();
 
-        self.cmd = self.parse_cmd(&mut chars);
-        self.args = self.parse_args(&mut chars);
+        self.cmd = Self::parse_cmd(&mut chars);
+        self.args = Self::parse_args(&mut chars);
     }
 
-    fn parse_cmd<I: Iterator<Item = char>>(&mut self, chars: &mut Peekable<I>) -> String {
+    fn parse_cmd<I: Iterator<Item = char>>(chars: &mut I) -> String {
         let mut cmd = String::new();
 
         let mut in_single_quotes = false;
         let mut in_double_quotes = false;
 
-        while let Some(&c) = chars.peek() {
+        for c in chars {
             match c {
                 SINGLE_QUOTES if !in_double_quotes => Self::toggle_bool(&mut in_single_quotes),
                 DOUBLE_QUOTES if !in_single_quotes => Self::toggle_bool(&mut in_double_quotes),
                 SPACE if !in_single_quotes && !in_double_quotes => break,
                 _ => cmd.push(c),
             }
-            chars.next();
         }
 
         cmd
     }
 
-    fn parse_args<I: Iterator<Item = char>>(&mut self, chars: &mut Peekable<I>) -> Vec<String> {
+    fn parse_args<I: Iterator<Item = char>>(chars: &mut I) -> Vec<String> {
         let mut args = Vec::new();
         let mut curr_arg = String::new();
 
@@ -82,29 +61,26 @@ impl Shell {
 
         const ESCAPABLE: [char; 4] = [BACKSLASH, PROMPT, DOUBLE_QUOTES, NEWLINE];
 
-        while let Some(&c) = chars.peek() {
+        for c in chars {
             if escape_next {
                 if in_double_quotes && !ESCAPABLE.contains(&c) {
                     curr_arg.push(BACKSLASH);
                 }
-
                 curr_arg.push(c);
-                escape_next = false;
-                chars.next();
+                Self::toggle_bool(&mut escape_next);
                 continue;
             }
 
             match c {
                 SINGLE_QUOTES if !in_double_quotes => Self::toggle_bool(&mut in_single_quotes),
                 DOUBLE_QUOTES if !in_single_quotes => Self::toggle_bool(&mut in_double_quotes),
-                BACKSLASH if !in_single_quotes => escape_next = true,
+                BACKSLASH if !in_single_quotes => Self::toggle_bool(&mut escape_next),
                 BACKSLASH => curr_arg.push(c),
                 SPACE if !in_single_quotes && !in_double_quotes => {
                     Self::save_arg(&mut curr_arg, &mut args)
                 }
                 _ => curr_arg.push(c),
             }
-            chars.next();
         }
         Self::save_arg(&mut curr_arg, &mut args);
 
@@ -121,6 +97,33 @@ impl Shell {
         *b = !*b;
     }
 
+    pub(super) fn handle_redirect(&self) -> io::Result<(Vec<String>, Option<File>, Option<File>)> {
+        let mut args = Vec::new();
+        let mut stdout_file = None;
+        let mut stderr_file = None;
+
+        let mut iter = self.args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.trim() {
+                ">" | "1>" | ">>" | "1>>" => {
+                    stdout_file = iter
+                        .next()
+                        .map(|path| OpenOptions::new().append(true).create(true).open(path))
+                        .transpose()?
+                }
+                "2>" | "2>>" => {
+                    stderr_file = iter
+                        .next()
+                        .map(|path| OpenOptions::new().append(true).create(true).open(path))
+                        .transpose()?
+                }
+                _ => args.push(arg.to_owned()),
+            }
+        }
+
+        Ok((args, stdout_file, stderr_file))
+    }
+
     pub(super) fn find_exe_in_path(name: &str) -> Option<PathBuf> {
         env::var_os("PATH").map(|paths| {
             env::split_paths(&paths).find_map(|path| {
@@ -131,7 +134,7 @@ impl Shell {
     }
 
     pub(super) fn print_prompt(&mut self) -> io::Result<()> {
-        sh_write!(self, "$ ")?;
+        write!(self.writer, "$ ")?;
         self.flush()?;
         Ok(())
     }
