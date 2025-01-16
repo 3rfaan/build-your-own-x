@@ -1,3 +1,4 @@
+mod error;
 mod utils;
 
 use std::io::{self, BufWriter, Stderr, Stdout, Write};
@@ -5,11 +6,15 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
 
+use self::error::ShellError;
+
+pub type Result<T> = std::result::Result<T, ShellError>;
+
 const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
 
 pub struct Shell {
     cmd: String,
-    args: Vec<String>,
+    args: Option<Vec<String>>,
     stdout: BufWriter<Stdout>,
     stderr: BufWriter<Stderr>,
 }
@@ -18,94 +23,136 @@ impl Shell {
     fn new(stdout: Stdout, stderr: Stderr) -> Self {
         Self {
             cmd: String::new(),
-            args: Vec::new(),
+            args: None,
             stdout: BufWriter::new(stdout),
             stderr: BufWriter::new(stderr),
         }
     }
 
-    fn handle_cmd(&mut self) -> io::Result<()> {
+    fn handle_cmd(&mut self) -> Result<()> {
         match self.cmd.trim() {
-            "exit" => self.exit()?,
-            "echo" => self.echo()?,
-            "type" => self.type_()?,
+            "exit" => {
+                if let Err(error) = self.exit() {
+                    writeln!(self.stderr, "{}", error)?;
+                }
+            }
+            "echo" => {
+                if let Err(error) = self.echo() {
+                    writeln!(self.stderr, "{}", error)?;
+                }
+            }
+            "type" => {
+                if let Err(error) = self.type_() {
+                    writeln!(self.stderr, "{}", error)?;
+                }
+            }
             "pwd" => self.pwd()?,
-            "cd" => self.cd()?,
-            _ => self.execute()?,
+            "cd" => {
+                if let Err(error) = self.cd() {
+                    writeln!(self.stderr, "{}", error)?;
+                }
+            }
+            _ => {
+                if let Err(error) = self.execute() {
+                    writeln!(self.stderr, "{}", error)?;
+                }
+            }
         }
         Ok(())
     }
 }
 
 impl Shell {
-    fn exit(&mut self) -> io::Result<()> {
-        // Get first argument
-        if let Some(code) = self.args.first() {
-            // Parse exit code to i32
+    fn exit(&mut self) -> Result<()> {
+        let args = match self.args {
+            Some(ref args) => args,
+            None => {
+                // Exit with exit code `0` as default when user doesn't provide argument
+                process::exit(0);
+            }
+        };
+
+        if let Some(code) = args.first() {
             match code.parse::<i32>() {
                 Ok(code) => process::exit(code),
-                Err(_) => writeln!(self.stderr, "Invalid exit code: {}", code)?,
+                Err(error) => return Err(ShellError::InvalidExitCode(error)),
             }
-        } else {
-            // Exit with exit code 0 when user types `exit` in terminal without
-            // argument
-            process::exit(0);
         }
         Ok(())
     }
 
-    fn echo(&mut self) -> io::Result<()> {
-        let (cmd_args, stdout_file, _) = self.handle_redirect()?;
-        let output = cmd_args.join(" ");
+    fn echo(&mut self) -> Result<()> {
+        match self.handle_redirect() {
+            Ok((cmd_args, stdout_file, _)) => {
+                let output = cmd_args.join(" ");
 
-        if let Some(mut stdout) = stdout_file {
-            writeln!(stdout, "{}", output)?;
-        } else {
-            writeln!(self.stdout, "{}", output)?;
+                if let Some(mut stdout) = stdout_file {
+                    writeln!(stdout, "{}", output)?;
+                } else {
+                    writeln!(self.stdout, "{}", output)?;
+                }
+            }
+            Err(error) => return Err(ShellError::RedirectionError(error.to_string())),
         }
-
         Ok(())
     }
 
-    fn type_(&mut self) -> io::Result<()> {
+    fn type_(&mut self) -> Result<()> {
+        let args = match self.args {
+            Some(ref args) => args,
+            None => return Ok(()),
+        };
+
         // Get first argument
-        if let Some(arg) = self.args.first() {
-            // Check if command is shell builtin
-            if BUILTINS.contains(&arg.as_str()) {
-                writeln!(self.stdout, "{} is a shell builtin", arg)?;
+        match args.first() {
+            Some(arg) => {
+                // Check if command is shell builtin
+                if BUILTINS.contains(&arg.as_str()) {
+                    writeln!(self.stdout, "{} is a shell builtin", arg)?;
+                }
+                // Check if command is in `$PATH`
+                else if let Some(path) = Self::find_exe_in_path(arg) {
+                    writeln!(self.stdout, "{} is {}", arg, path.display())?;
+                } else {
+                    return Err(ShellError::CommandNotFound(arg.to_owned()));
+                }
             }
-            // Check if command is in `$PATH`
-            else if let Some(path) = Self::find_exe_in_path(arg) {
-                writeln!(self.stdout, "{} is {}", arg, path.display())?;
-            } else {
-                writeln!(self.stderr, "{}: not found", arg)?;
+            None => {
+                return Err(ShellError::TooFewArguments {
+                    required: 1,
+                    received: args.len(),
+                })
             }
         }
         Ok(())
     }
 
-    fn execute(&mut self) -> io::Result<()> {
+    fn execute(&mut self) -> Result<()> {
         // If redirect with either `>`, `1>` or `2>` then get arguments until symbol,
         // handle to file of either stdout or stderr
-        let (cmd_args, stdout_file, stderr_file) = self.handle_redirect()?;
 
-        // Pass command and arguments
-        let mut cmd = Command::new(&self.cmd);
-        cmd.args(cmd_args);
+        match self.handle_redirect() {
+            Ok((cmd_args, stdout_file, stderr_file)) => {
+                // Pass command and arguments
+                let mut cmd = Command::new(&self.cmd);
+                cmd.args(cmd_args);
 
-        // If `>` or `1>` or `1>>` we should get back file for stdout
-        if let Some(stdout) = stdout_file {
-            cmd.stdout(stdout);
-        }
+                // If `>` or `1>` or `1>>` we should get back file for stdout
+                if let Some(stdout) = stdout_file {
+                    cmd.stdout(stdout);
+                }
 
-        // If `2>` or `2>>` we should get back file for stderr
-        if let Some(stderr) = stderr_file {
-            cmd.stderr(stderr);
-        }
+                // If `2>` or `2>>` we should get back file for stderr
+                if let Some(stderr) = stderr_file {
+                    cmd.stderr(stderr);
+                }
 
-        // Execute command with provided arguments, if error then command is invalid
-        if cmd.status().is_err() {
-            writeln!(self.stderr, "{}: command not found", self.cmd)?;
+                // Execute command with provided arguments, if error then command is invalid
+                if cmd.status().is_err() {
+                    return Err(ShellError::CommandNotFound(self.cmd.clone()));
+                }
+            }
+            Err(error) => return Err(ShellError::RedirectionError(error.to_string())),
         }
 
         Ok(())
@@ -117,45 +164,41 @@ impl Shell {
         Ok(())
     }
 
-    fn cd(&mut self) -> io::Result<()> {
+    fn cd(&mut self) -> Result<()> {
         // Get `$HOME` path
-        let home = env::var("HOME").expect("No $HOME variable set");
+        let home = env::var("HOME").map_err(|_| ShellError::EnvVarNotFound("HOME".to_owned()))?;
+
         // Get first argument and try to create PathBuf from it, otherwise PathBuf from
         // home path
         let path = self
             .args
-            .first()
-            .map(PathBuf::from)
+            .as_ref()
+            .and_then(|args| args.first().map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from(&home));
 
-        // If path starts with `~` then strip the symbol and replace it with `$HOME` path
-        // (usually /home/{$USER})
+        // Replace `~` with `$HOME`
         let path = if path.starts_with("~") {
             let home = PathBuf::from(home);
             home.join(path.strip_prefix("~").unwrap_or(&path))
         }
-        // If absolute path return path
+        // Use absolute path as-is
         else if path.is_absolute() {
             path
         }
-        // Otherwise return relative path
+        // Resolve relative paths against the current working directory
         else {
             env::current_dir()?.join(&path)
         };
 
-        // Set environment current working directory to `path`
+        // Attempt to change the current working directory
         if env::set_current_dir(&path).is_err() {
-            writeln!(
-                self.stderr,
-                "cd: {}: No such file or directory",
-                path.display()
-            )?;
+            return Err(ShellError::FileOrDirNotFound(path));
         }
         Ok(())
     }
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let stderr = io::stderr();

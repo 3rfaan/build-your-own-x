@@ -6,6 +6,7 @@ use std::{
     path::PathBuf,
 };
 
+use super::Result;
 use super::Shell;
 
 const SINGLE_QUOTES: char = '\'';
@@ -45,7 +46,7 @@ impl Shell {
         cmd
     }
 
-    fn parse_args<I: Iterator<Item = char>>(chars: &mut I) -> Vec<String> {
+    fn parse_args<I: Iterator<Item = char>>(chars: &mut I) -> Option<Vec<String>> {
         let mut args = Vec::new();
         let mut curr_arg = String::new();
 
@@ -89,7 +90,11 @@ impl Shell {
         // Push last argument to the vector of arguments
         Self::save_arg(&mut curr_arg, &mut args);
 
-        args
+        if args.is_empty() {
+            return None;
+        }
+
+        Some(args)
     }
 
     fn save_arg(arg: &mut String, args: &mut Vec<String>) {
@@ -103,15 +108,22 @@ impl Shell {
         *b = !*b;
     }
 
-    pub(super) fn handle_redirect(&self) -> io::Result<(Vec<String>, Option<File>, Option<File>)> {
+    pub(super) fn handle_redirect(&self) -> Result<(Vec<String>, Option<File>, Option<File>)> {
         // Arguments up to redirection symbols (`>`, `1>`, `1>>`, `2>`, `2>>`)
-        let mut args = Vec::new();
+        let mut cmd_args = Vec::new();
 
         let mut stdout_file = None; // File for stdout
         let mut stderr_file = None; // File for stderr
 
+        let args = match self.args {
+            Some(ref args) => args,
+            None => {
+                return Ok((cmd_args, stdout_file, stderr_file));
+            }
+        };
+
         // Iterator over arguments (String)
-        let mut iter = self.args.iter();
+        let mut iter = args.iter();
 
         while let Some(arg) = iter.next() {
             match arg.as_str() {
@@ -120,17 +132,17 @@ impl Shell {
                 // Create file of path from next argument after redirection symbol for stderr
                 "2>" | "2>>" => stderr_file = Self::create_output_file(iter.next())?,
                 // Any other argument we pass to `args`
-                _ => args.push(arg.to_owned()),
+                _ => cmd_args.push(arg.to_owned()),
             }
         }
 
-        Ok((args, stdout_file, stderr_file))
+        Ok((cmd_args, stdout_file, stderr_file))
     }
 
     fn create_output_file(arg: Option<&String>) -> io::Result<Option<File>> {
         // Create file which if doesn't exists will be created and can be appended to
         arg.map(|path| OpenOptions::new().append(true).create(true).open(path))
-            .transpose() // Option<Result<T,E> -> Result<Option<T,E>>
+            .transpose() // Option<Result<T,E> -> Result<Option<T>, E>
     }
 
     pub(super) fn find_exe_in_path(name: &str) -> Option<PathBuf> {
