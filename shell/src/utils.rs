@@ -6,7 +6,6 @@ use std::{
     path::PathBuf,
 };
 
-use super::Result;
 use super::Shell;
 
 const SINGLE_QUOTES: char = '\'';
@@ -108,7 +107,7 @@ impl Shell {
         *b = !*b;
     }
 
-    pub(super) fn handle_redirect(&self) -> Result<(Vec<String>, Option<File>, Option<File>)> {
+    pub(super) fn handle_redirect(&self) -> io::Result<(Vec<String>, Option<File>, Option<File>)> {
         // Arguments up to redirection symbols (`>`, `1>`, `1>>`, `2>`, `2>>`)
         let mut cmd_args = Vec::new();
 

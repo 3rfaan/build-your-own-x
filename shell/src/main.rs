@@ -10,8 +10,6 @@ use self::error::ShellError;
 
 pub type Result<T> = std::result::Result<T, ShellError>;
 
-const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
-
 pub struct Shell {
     cmd: String,
     args: Option<Vec<String>>,
@@ -92,7 +90,7 @@ impl Shell {
                     writeln!(self.stdout, "{}", output)?;
                 }
             }
-            Err(error) => return Err(ShellError::RedirectionError(error.to_string())),
+            Err(error) => return Err(ShellError::RedirectionError(error)),
         }
         Ok(())
     }
@@ -100,28 +98,22 @@ impl Shell {
     fn type_(&mut self) -> Result<()> {
         let args = match self.args {
             Some(ref args) => args,
-            None => return Ok(()),
+            None => return Err(ShellError::NoArguments),
         };
 
+        const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
+
         // Get first argument
-        match args.first() {
-            Some(arg) => {
-                // Check if command is shell builtin
-                if BUILTINS.contains(&arg.as_str()) {
-                    writeln!(self.stdout, "{} is a shell builtin", arg)?;
-                }
-                // Check if command is in `$PATH`
-                else if let Some(path) = Self::find_exe_in_path(arg) {
-                    writeln!(self.stdout, "{} is {}", arg, path.display())?;
-                } else {
-                    return Err(ShellError::CommandNotFound(arg.to_owned()));
-                }
+        if let Some(arg) = args.first() {
+            // Check if command is shell builtin
+            if BUILTINS.contains(&arg.as_str()) {
+                writeln!(self.stdout, "{} is a shell builtin", arg)?;
             }
-            None => {
-                return Err(ShellError::TooFewArguments {
-                    required: 1,
-                    received: args.len(),
-                })
+            // Check if command is in `$PATH`
+            else if let Some(path) = Self::find_exe_in_path(arg) {
+                writeln!(self.stdout, "{} is {}", arg, path.display())?;
+            } else {
+                return Err(ShellError::CommandNotFound(arg.to_owned()));
             }
         }
         Ok(())
@@ -152,7 +144,7 @@ impl Shell {
                     return Err(ShellError::CommandNotFound(self.cmd.clone()));
                 }
             }
-            Err(error) => return Err(ShellError::RedirectionError(error.to_string())),
+            Err(error) => return Err(ShellError::RedirectionError(error)),
         }
 
         Ok(())
@@ -179,7 +171,13 @@ impl Shell {
         // Replace `~` with `$HOME`
         let path = if path.starts_with("~") {
             let home = PathBuf::from(home);
-            home.join(path.strip_prefix("~").unwrap_or(&path))
+
+            match path.strip_prefix("~") {
+                Ok(path) => home.join(path),
+                Err(error) => {
+                    return Err(ShellError::HomeDirPathError(error));
+                }
+            }
         }
         // Use absolute path as-is
         else if path.is_absolute() {

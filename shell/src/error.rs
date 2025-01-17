@@ -1,46 +1,46 @@
-use std::{error, fmt, io, num, path::PathBuf};
+use std::{
+    error, fmt, io, num,
+    path::{self, PathBuf},
+};
 
 #[derive(Debug)]
 pub enum ShellError {
-    InvalidExitCode(num::ParseIntError),
-    NoArguments,
-    TooFewArguments { required: u8, received: usize },
     CommandNotFound(String),
-    FileOrDirNotFound(PathBuf),
     EnvVarNotFound(String),
-    RedirectionError(String),
+    FileOrDirNotFound(PathBuf),
+    HomeDirPathError(path::StripPrefixError),
+    InvalidExitCode(num::ParseIntError),
     IoError(io::Error),
+    NoArguments,
+    RedirectionError(io::Error),
 }
 
 impl fmt::Display for ShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidExitCode(error) => {
-                write!(f, "invalid exit code: {error}")
-            }
-            Self::NoArguments => {
-                write!(f, "arguments are required")
-            }
-            Self::TooFewArguments { required, received } => {
-                write!(
-                    f,
-                    "too few arguments: required: {required}, received: {received}"
-                )
-            }
             Self::CommandNotFound(cmd) => {
                 write!(f, "{cmd}: not found")
-            }
-            Self::FileOrDirNotFound(path) => {
-                write!(f, "cd: {}: No such file or directory", path.display())
             }
             Self::EnvVarNotFound(var) => {
                 write!(f, "${} not found", var.to_uppercase())
             }
-            Self::RedirectionError(error) => {
-                write!(f, "{}", error)
+            Self::FileOrDirNotFound(path) => {
+                write!(f, "cd: {}: No such file or directory", path.display())
+            }
+            Self::HomeDirPathError(error) => {
+                write!(f, "could not strip '~' prefix from path: {error}")
+            }
+            Self::InvalidExitCode(error) => {
+                write!(f, "invalid exit code: {error}")
             }
             Self::IoError(error) => {
                 write!(f, "{error}")
+            }
+            Self::NoArguments => {
+                write!(f, "arguments are required")
+            }
+            Self::RedirectionError(error) => {
+                write!(f, "{}", error)
             }
         }
     }
