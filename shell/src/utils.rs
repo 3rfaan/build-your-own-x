@@ -8,6 +8,8 @@ use std::{
 
 use super::Shell;
 
+pub const BUILTINS: [&str; 5] = ["cd", "echo", "exit", "pwd", "type"];
+
 const SINGLE_QUOTES: char = '\'';
 const DOUBLE_QUOTES: char = '"';
 const NEWLINE: char = '\n';
@@ -41,20 +43,19 @@ impl Shell {
                 _ => cmd.push(c),
             }
         }
-
         cmd
     }
 
     fn parse_args<I: Iterator<Item = char>>(chars: &mut I) -> Option<Vec<String>> {
+        // Characters which should be escaped by `\`
+        const ESCAPABLE: [char; 4] = [BACKSLASH, PROMPT, DOUBLE_QUOTES, NEWLINE];
+
         let mut args = Vec::new();
         let mut curr_arg = String::new();
 
         let mut in_single_quotes = false;
         let mut in_double_quotes = false;
         let mut escape_next = false;
-
-        // Characters which should be escaped by `\`
-        const ESCAPABLE: [char; 4] = [BACKSLASH, PROMPT, DOUBLE_QUOTES, NEWLINE];
 
         for c in chars {
             // If `escape_next` is truthy then escape current character
@@ -90,10 +91,10 @@ impl Shell {
         Self::save_arg(&mut curr_arg, &mut args);
 
         if args.is_empty() {
-            return None;
+            None
+        } else {
+            Some(args)
         }
-
-        Some(args)
     }
 
     fn save_arg(arg: &mut String, args: &mut Vec<String>) {
@@ -147,12 +148,12 @@ impl Shell {
     pub(super) fn find_exe_in_path(name: &str) -> Option<PathBuf> {
         // Get `$PATH` and split on `:` to get all environment paths, then check if command is in
         // one of these paths
-        env::var_os("PATH").map(|paths| {
+        env::var_os("PATH").and_then(|paths| {
             env::split_paths(&paths).find_map(|path| {
                 let full_path = path.join(name);
                 full_path.exists().then_some(full_path)
             })
-        })?
+        })
     }
 
     pub(super) fn print_prompt(&mut self) -> io::Result<()> {

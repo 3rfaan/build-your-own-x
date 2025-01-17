@@ -9,10 +9,9 @@ pub enum ShellError {
     EnvVarNotFound(String),
     FileOrDirNotFound(PathBuf),
     HomeDirPathError(path::StripPrefixError),
-    InvalidExitCode(num::ParseIntError),
+    ExitCodeParseError(num::ParseIntError),
     IoError(io::Error),
     NoArguments,
-    RedirectionError(io::Error),
 }
 
 impl fmt::Display for ShellError {
@@ -30,7 +29,7 @@ impl fmt::Display for ShellError {
             Self::HomeDirPathError(error) => {
                 write!(f, "could not strip '~' prefix from path: {error}")
             }
-            Self::InvalidExitCode(error) => {
+            Self::ExitCodeParseError(error) => {
                 write!(f, "invalid exit code: {error}")
             }
             Self::IoError(error) => {
@@ -38,9 +37,6 @@ impl fmt::Display for ShellError {
             }
             Self::NoArguments => {
                 write!(f, "arguments are required")
-            }
-            Self::RedirectionError(error) => {
-                write!(f, "{}", error)
             }
         }
     }
